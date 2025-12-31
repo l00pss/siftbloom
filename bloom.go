@@ -2,6 +2,7 @@ package siftbloom
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/l00pss/helpme/result"
 )
@@ -27,6 +28,10 @@ func NewBitArray(size int) result.Result[*BitArray] {
 	)
 }
 
+func (b *BitArray) GetSize() int {
+	return b.size
+}
+
 func (b *BitArray) Set(pos int, value bool) {
 	byteIndex := pos / 8
 	bitIndex := uint(pos % 8)
@@ -45,6 +50,27 @@ func (b *BitArray) Get(pos int) bool {
 }
 
 type SiftBloom struct {
+	mu        sync.RWMutex
 	bits      BitArray
 	hashCount int
+	hash      func(in int64) int64
+}
+
+func (s *SiftBloom) Add(element any) {
+
+}
+
+func (s *SiftBloom) Contains(element any) bool {
+	return false
+}
+
+func (s *SiftBloom) Clear() {
+	defer s.mu.Unlock()
+	if s.mu.TryLock() {
+		res := NewBitArray(s.bits.GetSize())
+		if res.IsOk() {
+			s.hashCount = 0
+			s.bits = *res.Unwrap()
+		}
+	}
 }
