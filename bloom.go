@@ -68,25 +68,35 @@ func ToBytes(element any) []byte {
 	val := reflect.ValueOf(element)
 	switch val.Kind() {
 	case reflect.Struct:
-		return []byte(fmt.Sprintf("%+v", element))
+		return fmt.Appendf(nil, "%+v", element)
 	case reflect.Slice:
-		return []byte(fmt.Sprintf("%v", element))
+		return fmt.Appendf(nil, "%v", element)
 	default:
-		return []byte(fmt.Sprintf("%v", element))
+		return fmt.Appendf(nil, "%v", element)
 	}
 }
 
 func (s *SiftBloom) Contains(element any) bool {
-	return false
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	bytes := ToBytes(element)
+	hashes := s.getMultipleHashes(bytes)
+
+	for _, hashIndex := range hashes {
+		if !s.bits.Get(hashIndex) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *SiftBloom) Clear() {
+	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mu.TryLock() {
-		res := NewBitArray(s.bits.GetSize())
-		if res.IsOk() {
-			s.hashFactor = 0
-			s.bits = *res.Unwrap()
-		}
+
+	res := NewBitArray(s.bits.GetSize())
+	if res.IsOk() {
+		s.bits = *res.Unwrap()
 	}
 }
