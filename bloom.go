@@ -1,63 +1,79 @@
 package siftbloom
 
 import (
-	"errors"
+	"fmt"
+	"hash/fnv"
+	"reflect"
 	"sync"
 
 	"github.com/l00pss/helpme/result"
 )
 
-var (
-	IvalidArraySize = errors.New("Invalid array size")
-)
-
-type BitArray struct {
-	data []byte
-	size int
-}
-
-func NewBitArray(size int) result.Result[*BitArray] {
-	if size <= 0 {
-		return result.Err[*BitArray](IvalidArraySize)
-	}
-	return result.Ok(
-		&BitArray{
-			data: make([]byte, (size+7)/8),
-			size: size,
-		},
-	)
-}
-
-func (b *BitArray) GetSize() int {
-	return b.size
-}
-
-func (b *BitArray) Set(pos int, value bool) {
-	byteIndex := pos / 8
-	bitIndex := uint(pos % 8)
-
-	if value {
-		b.data[byteIndex] |= (1 << bitIndex)
-	} else {
-		b.data[byteIndex] &^= (1 << bitIndex)
-	}
-}
-
-func (b *BitArray) Get(pos int) bool {
-	byteIndex := pos / 8
-	bitIndex := uint(pos % 8)
-	return (b.data[byteIndex] & (1 << bitIndex)) != 0
-}
-
 type SiftBloom struct {
-	mu        sync.RWMutex
-	bits      BitArray
-	hashCount int
-	hash      func(in int64) int64
+	mu         sync.RWMutex
+	bits       BitArray
+	hashFactor int
+}
+
+func NewSiftBloom(size int, hashFactor int) result.Result[*SiftBloom] {
+	bitsResult := NewBitArray(size)
+	if bitsResult.IsErr() {
+		return result.Err[*SiftBloom](bitsResult.UnwrapErr())
+	}
+
+	return result.Ok(&SiftBloom{
+		bits:       *bitsResult.Unwrap(),
+		mu:         sync.RWMutex{},
+		hashFactor: hashFactor,
+	})
 }
 
 func (s *SiftBloom) Add(element any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
+	bytes := ToBytes(element)
+	hashes := s.getMultipleHashes(bytes)
+
+	for _, hashIndex := range hashes {
+		s.bits.Set(hashIndex, true)
+	}
+}
+
+func (s *SiftBloom) getMultipleHashes(data []byte) []int {
+	h1 := s.hashFNV1(data)
+	h2 := s.hashFNV2(data)
+
+	hashes := make([]int, s.hashFactor)
+	for i := 0; i < s.hashFactor; i++ {
+		hashValue := (h1 + uint64(i)*h2) % uint64(s.bits.GetSize())
+		hashes[i] = int(hashValue)
+	}
+	return hashes
+}
+
+func (s *SiftBloom) hashFNV1(data []byte) uint64 {
+	h := fnv.New64a()
+	h.Write(data)
+	return h.Sum64()
+}
+
+func (s *SiftBloom) hashFNV2(data []byte) uint64 {
+	h := fnv.New64()
+	h.Write(data)
+	return h.Sum64()
+}
+
+func ToBytes(element any) []byte {
+	val := reflect.ValueOf(element)
+	switch val.Kind() {
+	case reflect.Struct:
+		return []byte(fmt.Sprintf("%+v", element))
+	case reflect.Slice:
+		return []byte(fmt.Sprintf("%v", element))
+	default:
+		return []byte(fmt.Sprintf("%v", element))
+	}
 }
 
 func (s *SiftBloom) Contains(element any) bool {
@@ -69,7 +85,7 @@ func (s *SiftBloom) Clear() {
 	if s.mu.TryLock() {
 		res := NewBitArray(s.bits.GetSize())
 		if res.IsOk() {
-			s.hashCount = 0
+			s.hashFactor = 0
 			s.bits = *res.Unwrap()
 		}
 	}
